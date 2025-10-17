@@ -147,4 +147,4 @@ uvicorn main:app --reload
 
 ---
 
-This README ensures that anyone cloning the project or working on it understands the complete workflow, project structure, and deployment process.
+This README ensures that anyone cloning the project or working on it understands the complete workflow, project structure, and deployment process. Done
