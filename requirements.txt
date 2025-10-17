@@ -1,0 +1,8 @@
+fastapi
+uvicorn
+gitpython
+python-dotenv
+requests
+httpx
+PyGithub
+anyio
