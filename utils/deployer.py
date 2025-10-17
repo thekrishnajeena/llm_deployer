@@ -18,8 +18,12 @@ def notify_evaluation_api(evaluation_url, email, task, round_, nonce, repo_url, 
             r = requests.post(evaluation_url, json=payload, timeout=10)
             if r.status_code == 200:
                 return True
+            else:
+                print(f"Evaluation API responded  with {r.status_code}, retrying...")
         except Exception as e:
-            pass
+            print(f"Error notifying evaluation API: {e}. Retrying...")
         time.sleep(delay)
         delay *= 2
-    raise Exception("Failed to notify evaluation API after retries")
+    
+    print("Failed to notify evaluation API after retries")
+    return False

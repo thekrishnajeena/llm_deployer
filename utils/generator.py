@@ -3,34 +3,53 @@ import os
 import json
 import httpx
 from dotenv import load_dotenv
+import asyncio
 
 load_dotenv()
 
-key = os.getenv("GEMINI_API_KEY")
+key = os.getenv("OPENAI_API_KEY")
 
 API_URL = "https://aipipe.org/openrouter/v1/chat/completions"
 MODEL = "openai/gpt-4.1-mini" 
 
-async def generate_app(task, brief, attachments):
-    print(f"⚡ Generating app for task: {task}", flush=True)
+async def generate_app(task, brief, attachments, checks):
+    print(f"⚙️ Processing task '{task}'...", flush=True)
 
-    # LLM prompt to generate multiple files
+    # Format attachments and checks nicely for the LLM
+    attachments_text = "\n".join(
+        [f"- {a.get('name', 'unknown')}" for a in attachments]
+    ) or "No attachments provided."
+
+    checks_text = "\n".join(f"- {chk}" for chk in checks) or "No explicit checks."
+
     prompt = f"""
-You are a code generator. Generate a minimal web app based on the following brief for {task}:
-{brief}
+You are an expert web app generator. Build a **static web app** suitable for direct deployment on **GitHub Pages**.
 
-Attachments: {attachments}
+## Requirements:
+- Base it on the task: "{task}"
+- Follow this project brief:
+  {brief}
+- Consider these evaluation checks:
+  {checks_text}
+- Reference attachments if relevant:
+  {attachments_text}
+- Use only HTML, CSS, and JavaScript.
+- Write a good Readme file(dont take much time).
+- Avoid Node.js, Python, or server-side code.
+- Make it responsive and mobile-friendly.
+- Include MIT license notice if required.
+- Place main entry as `index.html`.
+- Return ONLY a valid JSON array of objects with fields:
+  - `path`: file path (string)
+  - `content`: file contents (string)
 
-Output **only a JSON array of files** with `path` and `content`. Example:
-
+Example format:
 [
-  {{"path": "index.html", "content": "<html>...</html>"}},
-  {{"path": "script.js", "content": "console.log('Hello')"}},
-  {{"path": "styles.css", "content": "body {{ font-family: sans-serif; }}" }}
+  {{"path": "index.html", "content": "<!DOCTYPE html>..."}},
+  {{"path": "style.css", "content": "body {{ font-family: sans-serif; }}"}},
+  {{"path": "script.js", "content": "console.log('App loaded')"}}
 ]
-
-Return only valid JSON. Do not add any extra text.
-"""
+    """
 
     headers = {
         "Authorization": f"Bearer {key}",
@@ -40,49 +59,52 @@ Return only valid JSON. Do not add any extra text.
     payload = {
         "model": MODEL,
         "messages": [
-            {"role": "system", "content": "You are a code generator that outputs only JSON file lists."},
+            {"role": "system", "content": "You are a strict JSON-only code generator for deployable static web apps."},
             {"role": "user", "content": prompt}
-        ]
+        ],
+        "temperature": 0.4
     }
 
-    timeout = httpx.Timeout(120.0, connect=20.0)  # increase for LLM
+    timeout = httpx.Timeout(180.0, connect=30.0)
+    retries = 3
+
     async with httpx.AsyncClient(timeout=timeout) as client:
-        try:
-            response = await client.post(API_URL, headers=headers, json=payload)
-        except httpx.ReadTimeout:
-            print("⚠️ LLM request timed out")
-            raise
+        for attempt in range(retries):
+            try:
+                response = await client.post(API_URL, headers=headers, json=payload)
+                if response.status_code == 200:
+                    break
+                else:
+                    print(f"⚠️ Attempt {attempt+1}: API returned {response.status_code}", flush=True)
+            except httpx.RequestError as e:
+                print(f"⚠️ Attempt {attempt+1} failed: {e}", flush=True)
+            await asyncio.sleep(2 * (attempt + 1))
+        else:
+            raise Exception("❌ Failed to reach LLM API after multiple retries")
 
-        if response.status_code != 200:
-            print("❌ Error from LLM:", response.text, flush=True)
-            raise Exception(f"LLM API error: {response.status_code}")
+    data = response.json()
+    content = data["choices"][0]["message"]["content"]
 
-        data = response.json()
-        content = data["choices"][0]["message"]["content"]
-        # print("LLM raw response:", content, flush=True)
-
- # Parse JSON safely
     try:
         files = json.loads(content)
         if not isinstance(files, list):
-            raise ValueError("LLM returned JSON is not a list")
+            raise ValueError("Expected a JSON array of file objects")
     except json.JSONDecodeError:
-        print("❌ LLM did not return valid JSON")
+        print("❌ Invalid JSON returned by LLM:", content[:400])
         raise
 
-    # Create visible folder and write files
-    app_dir = os.path.join(os.getcwd(), task)  # current directory
+    app_dir = os.path.join(os.getcwd(), task)
     os.makedirs(app_dir, exist_ok=True)
 
     for f in files:
         file_path = os.path.join(app_dir, f["path"])
         os.makedirs(os.path.dirname(file_path), exist_ok=True)
-
-        # Use atomic write: write to temp file then rename
-        temp_path = file_path + ".tmp"
-        with open(temp_path, "w", encoding="utf-8") as fp:
+        tmp_path = file_path + ".tmp"
+        with open(tmp_path, "w", encoding="utf-8") as fp:
             fp.write(f["content"])
-        os.replace(temp_path, file_path)  # atomic replace ensures file is closed
+        os.replace(tmp_path, file_path)
 
-    print(f"✅ Generated {len(files)} files at: {app_dir}", flush=True)
+    print(f"✅ Generated {len(files)} files for '{task}' in {app_dir}")
+    print(f"🚀 Deployable on GitHub Pages — just push this folder to your repo!")
+
     return app_dir
